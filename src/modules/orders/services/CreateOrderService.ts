@@ -11,16 +11,9 @@ interface IProduct {
   id: string;
   quantity: number;
 }
-
 interface IRequest {
   customer_id: string;
   products: IProduct[];
-}
-
-interface IProductOrdered {
-  product_id: string;
-  product_price: number;
-  product_quantity: number;
 }
 
 @injectable()
@@ -43,26 +36,51 @@ class CreateProductService {
       throw new AppError('Customer does not exists');
     }
 
-    const productsFind = await this.productsRepository.findAllById(products);
+    const checkProductQuantityReceived = products.some(
+      product => product.quantity <= 0,
+    );
 
-    if (productsFind.length !== products.length) {
-      throw new AppError('One or more products not found.');
+    if (checkProductQuantityReceived) {
+      throw new AppError('Quantity invalid to some products in list.');
     }
 
-    const productsList = productsFind.map(productInList => ({
-      product_id: productInList.id,
-      price: productInList.price,
-      quantity:
-        products.find(productFind => productFind.id === productInList.id)
-          ?.quantity || 0,
-    }));
+    const productsInStock = await this.productsRepository.findAllById(products);
+
+    if (productsInStock.length !== products.length) {
+      throw new AppError('One or more products not found in stock.');
+    }
+
+    const updateProducts: IProduct[] = [];
+
+    const productsInOrder = productsInStock.map(productInStock => {
+      const productInOrder = products.find(
+        productOrder => productOrder.id === productInStock.id,
+      );
+      if (
+        (productInOrder?.quantity || 0) > productInStock.quantity ||
+        productInStock.quantity === 0
+      ) {
+        throw new AppError(
+          `The product ${productInStock.name} has only ${productInStock.quantity} pieces in stock.`,
+        );
+      }
+      updateProducts.push({
+        id: productInStock.id,
+        quantity: productInStock.quantity - (productInOrder?.quantity || 0),
+      });
+      return {
+        product_id: productInStock.id,
+        price: productInStock.price,
+        quantity: productInOrder?.quantity || 0,
+      };
+    });
 
     const order = await this.ordersRepository.create({
       customer,
-      products: productsList,
+      products: productsInOrder,
     });
 
-    await this.productsRepository.updateQuantity(products);
+    await this.productsRepository.updateQuantity(updateProducts);
 
     return order;
   }
